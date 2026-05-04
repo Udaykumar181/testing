@@ -950,9 +950,8 @@ const SESSION_MS   = 30 * 60 * 1000;
 const WARN_MS      = 3  * 60 * 1000;
 const MAX_PHOTOS   = 6;
 const HW_TOTAL     = HW_ITEMS.length;
-// FIX BUG-11: Extended attendance end to 1:30 PM to close the 12:00–1:00 gap
 const ATT_START_MIN = 8  * 60 + 30;  // 8:30 AM
-const ATT_END_MIN   = 13 * 60 + 30;  // 1:30 PM (was 13*60 = 1:00 PM)
+const ATT_END_MIN   = 13 * 60 + 30;  // 1:30 PM
 
 /* Mutable state */
 let SESSION         = null;
@@ -1067,12 +1066,11 @@ function showGasError(msg) {
 /* ══════════════════════════════════════════════════════════════
    GAS BRIDGE  —  fetch-based (Vercel/GitHub deployment)
    ══════════════════════════════════════════════════════════════ */
-// NEW — calls Vercel proxy (no CORS issues)
 function gas(fn, ...args) {
   const token = SESSION && SESSION.token ? SESSION.token : null;
   const payload = { fn, args: [...args, token] };
-  
-  return fetch('/api/gas', {          // ← relative URL, hits your proxy
+
+  return fetch('/api/gas', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -1086,6 +1084,7 @@ function gas(fn, ...args) {
     return r.result;
   });
 }
+
 /* ══════════════════════════════════════════════════════════════
    OFFLINE DETECTION
    ══════════════════════════════════════════════════════════════ */
@@ -1097,7 +1096,6 @@ function initOfflineDetection() {
 
 /* ══════════════════════════════════════════════════════════════
    SESSION TIMER
-   FIX BUG-7: Only meaningful interactions reset the timer
    ══════════════════════════════════════════════════════════════ */
 function startSession() {
   clearTimeout(sessionTimer); clearTimeout(warnTimer);
@@ -1115,7 +1113,6 @@ function extendSession() {
   toast('Session extended.', 'ok', 2200);
 }
 
-// FIX BUG-7: Only meaningful control interactions reset the idle timer
 document.addEventListener('click', e => {
   if (!SESSION) return;
   const isAppVisible = !document.getElementById('app').classList.contains('hidden');
@@ -1305,7 +1302,6 @@ function compressPhoto(file) {
 
 /* ══════════════════════════════════════════════════════════════
    LOGIN
-   FIX BUG-1: Better mobile check messaging + clear CTA for edge cases
    ══════════════════════════════════════════════════════════════ */
 async function doLogin() {
   const u = (document.getElementById('lu').value || '').trim().toLowerCase();
@@ -1317,7 +1313,6 @@ async function doLogin() {
   try {
     const res = await gas('verifyLogin', u, p);
     if (res && res.success) {
-      // FIX BUG-1: Better mobile detection with helpful, actionable message
       if (res.role === 'INSTRUCTOR' && !isMobile()) {
         setBusy(false);
         document.getElementById('loginCard').classList.remove('glow-on');
@@ -1342,9 +1337,7 @@ async function doLogin() {
   } catch (e) {
     setBusy(false);
     document.getElementById('loginCard').classList.remove('glow-on');
-    showErr(e && e.message === 'GAS_NOT_FOUND'
-      ? 'This page must be served from a Google Apps Script Web App URL.'
-      : 'Server error: ' + (e && e.message || 'Unknown.'));
+    showErr('Server error: ' + (e && e.message || 'Unknown.'));
     shakeCard();
   }
 }
@@ -1412,67 +1405,117 @@ function doLogout() {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   ATTENDANCE
-   FIX BUG-11: ATT_END_MIN is now 1:30 PM (see constant above)
+   ATTENDANCE (INSTRUCTOR)
    ══════════════════════════════════════════════════════════════ */
-function getMinutesSinceMidnight() { const n = new Date(); return n.getHours()*60+n.getMinutes(); }
-function isAttendanceWindow() { const m = getMinutesSinceMidnight(); return m>=ATT_START_MIN && m<=ATT_END_MIN; }
+function getMinutesSinceMidnight() {
+  const n = new Date();
+  return n.getHours() * 60 + n.getMinutes();
+}
+
+function isAttendanceWindow() {
+  const m = getMinutesSinceMidnight();
+  return m >= ATT_START_MIN && m <= ATT_END_MIN;
+}
 
 async function loadAttendanceStatus() {
-  if (!SESSION || !SESSION.labCode) return;
-  const el = document.getElementById('attendanceStatus');
-  const btnP = document.getElementById('btnPresent'), btnA = document.getElementById('btnAbsent');
+  if (!SESSION || !SESSION.labCode?.trim()) return;
+
+  const el    = document.getElementById('attendanceStatus');
+  const btnP  = document.getElementById('btnPresent');
+  const btnA  = document.getElementById('btnAbsent');
+  const btns  = document.getElementById('attButtons');
+  const done  = document.getElementById('attDoneBanner');
+  const card  = document.getElementById('attCard');
+  const dsSt  = document.getElementById('attDoneStatus');
+  const dsTm  = document.getElementById('attDoneTime');
+  const dsNt  = document.getElementById('attDoneNote');
+
   const inWindow = isAttendanceWindow();
+
   try {
     const att = await gas('getTodayAttendance', SESSION.labCode);
+
     if (att && att.marked) {
-      document.getElementById('attButtons').classList.add('hidden');
-      document.getElementById('attDoneBanner').classList.remove('hidden');
-      document.getElementById('attCard').classList.add('att-done');
-      document.getElementById('attDoneStatus').textContent = att.status==='PRESENT' ? '✅ Marked Present' : '❌ Marked Absent';
-      document.getElementById('attDoneTime').textContent = 'at ' + att.time;
-      document.getElementById('attDoneNote').textContent = 'Attendance already recorded for today';
+      btns?.classList.add('hidden');
+      done?.classList.remove('hidden');
+      card?.classList.add('att-done');
+      if (dsSt) dsSt.textContent = att.status === 'PRESENT' ? '✅ Marked Present' : '❌ Marked Absent';
+      if (dsTm) dsTm.textContent = 'at ' + att.time;
+      if (dsNt) dsNt.textContent = 'Attendance already recorded for today';
     } else {
-      document.getElementById('attButtons').classList.remove('hidden');
-      document.getElementById('attDoneBanner').classList.add('hidden');
-      document.getElementById('attCard').classList.remove('att-done');
+      btns?.classList.remove('hidden');
+      done?.classList.add('hidden');
+      card?.classList.remove('att-done');
+
       if (inWindow) {
-        if (btnP) btnP.disabled = false; if (btnA) btnA.disabled = false;
-        if (el) el.textContent = 'Mark your attendance now (window open)';
+        if (btnP) btnP.disabled = false;
+        if (btnA) btnA.disabled = false;
+        if (el)  el.textContent = 'Mark your attendance now (window open)';
       } else {
-        if (btnP) btnP.disabled = true; if (btnA) btnA.disabled = true;
-        const m = getMinutesSinceMidnight();
-        if (el) el.textContent = m < ATT_START_MIN ? 'Attendance window opens at 8:30 AM' : 'Attendance window closed at 1:30 PM';
+        if (btnP) btnP.disabled = true;
+        if (btnA) btnA.disabled = true;
+        if (el) {
+          const m = getMinutesSinceMidnight();
+          el.textContent = m < ATT_START_MIN
+            ? 'Attendance window opens at 8:30 AM'
+            : 'Attendance window closed at 1:30 PM';
+        }
       }
     }
-  } catch (_) { if (el) el.textContent = 'Could not load attendance status.'; }
+  } catch (err) {
+    if (el) el.textContent = 'Could not load attendance status.';
+    console.error('loadAttendanceStatus:', err);
+  }
 }
 
 async function markAttendance(status) {
-  if (!SESSION || !SESSION.labCode) return;
-  const btnP = document.getElementById('btnPresent'), btnA = document.getElementById('btnAbsent');
-  if (btnP) btnP.disabled = true; if (btnA) btnA.disabled = true;
+  if (!SESSION || !SESSION.labCode?.trim()) return;
+
+  const btnP = document.getElementById('btnPresent');
+  const btnA = document.getElementById('btnAbsent');
+
+  if (btnP) btnP.disabled = true;
+  if (btnA) btnA.disabled = true;
+
   try {
-    const res = await gas('saveAttendance', {labCode: SESSION.labCode, status});
-    if (res && res.success) {
-      toast('Attendance marked: '+res.status+' at '+res.time, 'ok', 4000);
-      document.getElementById('attCard').classList.add('att-done');
-      document.getElementById('attButtons').classList.add('hidden');
-      document.getElementById('attDoneBanner').classList.remove('hidden');
-      document.getElementById('attDoneStatus').textContent = status==='PRESENT' ? '✅ Marked Present' : '❌ Marked Absent';
-      document.getElementById('attDoneTime').textContent = 'at ' + res.time;
-      document.getElementById('attDoneNote').textContent = 'Attendance recorded — cannot change';
-    } else if (res && res.alreadyMarked) {
-      toast('Already marked: '+res.status+' at '+res.time, 'info', 5000); loadAttendanceStatus();
-    } else if (res && res.outsideWindow) {
-      toast(res.message || 'Outside attendance window.', 'warn', 5000); loadAttendanceStatus();
+    const res = await gas('saveAttendance', { labCode: SESSION.labCode, status });
+
+    if (res?.success) {
+      toast('Attendance marked: ' + res.status + ' at ' + res.time, 'ok', 4000);
+
+      const card = document.getElementById('attCard');
+      const btns = document.getElementById('attButtons');
+      const done = document.getElementById('attDoneBanner');
+      const dsSt = document.getElementById('attDoneStatus');
+      const dsTm = document.getElementById('attDoneTime');
+      const dsNt = document.getElementById('attDoneNote');
+
+      card?.classList.add('att-done');
+      btns?.classList.add('hidden');
+      done?.classList.remove('hidden');
+      if (dsSt) dsSt.textContent = status === 'PRESENT' ? '✅ Marked Present' : '❌ Marked Absent';
+      if (dsTm) dsTm.textContent = 'at ' + res.time;
+      if (dsNt) dsNt.textContent = 'Attendance recorded — cannot change';
+
+    } else if (res?.alreadyMarked) {
+      toast('Already marked: ' + res.status + ' at ' + res.time, 'info', 5000);
+      await loadAttendanceStatus();
+
+    } else if (res?.outsideWindow) {
+      toast(res.message || 'Attendance window is closed.', 'warn', 5000);
+      await loadAttendanceStatus();
+
     } else {
-      toast((res && res.message) || 'Failed to mark attendance.', 'err');
-      if (btnP) btnP.disabled = false; if (btnA) btnA.disabled = false;
+      toast((res?.message) || 'Failed to mark attendance.', 'err');
+      if (btnP) btnP.disabled = false;
+      if (btnA) btnA.disabled = false;
     }
-  } catch (e) {
-    toast('Error: ' + e.message, 'err');
-    if (btnP) btnP.disabled = false; if (btnA) btnA.disabled = false;
+
+  } catch (err) {
+    toast('Error: ' + err.message, 'err');
+    if (btnP) btnP.disabled = false;
+    if (btnA) btnA.disabled = false;
+    console.error('markAttendance:', err);
   }
 }
 
@@ -1481,7 +1524,6 @@ async function markAttendance(status) {
    ══════════════════════════════════════════════════════════════ */
 function applySessionTimeGating() {
   const m = getMinutesSinceMidnight();
-  // Morning: 8:00 AM – 1:00 PM, Evening: 1:00 PM – 5:30 PM
   const morningOk = m >= 480 && m < 780;
   const eveningOk = m >= 780 && m <= 1050;
   const amCard = document.getElementById('sessMorning'), pmCard = document.getElementById('sessEvening');
@@ -1604,9 +1646,9 @@ function updateProgress() {
   document.getElementById('hwCount').textContent = filled+' / '+HW_TOTAL;
   document.getElementById('progBar').style.width = pct+'%';
   const lbl = document.getElementById('progressLbl'), sub = document.getElementById('progressSub');
-  if (filled === 0)       { lbl.textContent='Hardware Status'; sub.textContent='Tap each item to mark its status'; }
+  if (filled === 0)           { lbl.textContent='Hardware Status'; sub.textContent='Tap each item to mark its status'; }
   else if (filled===HW_TOTAL) { lbl.textContent='All Items Checked ✓'; sub.textContent='Add photos and submit'; }
-  else                    { lbl.textContent=pct+'% Complete'; sub.textContent=(HW_TOTAL-filled)+' item(s) remaining'; }
+  else                        { lbl.textContent=pct+'% Complete'; sub.textContent=(HW_TOTAL-filled)+' item(s) remaining'; }
 }
 
 function updateCharCount() { document.getElementById('charCount').textContent = document.getElementById('remarkBox').value.length+' / 500'; }
@@ -1652,7 +1694,6 @@ async function handlePhotoFiles(event) {
 
 /* ══════════════════════════════════════════════════════════════
    SUBMIT CHECKLIST
-   FIX BUG-6: Progress bar properly reaches 100% before hiding
    ══════════════════════════════════════════════════════════════ */
 async function submitChecklist() {
   if (!currentSession)                                              { toast('Please select Morning or Evening first.', 'warn'); return; }
@@ -1686,7 +1727,6 @@ async function submitChecklist() {
         } catch (e) { console.error('Upload attempt '+(attempt+1)+' failed', e); }
       }
       if (!success) throw new Error(`Photo ${i+1} failed to upload after 3 attempts.`);
-      // FIX BUG-6: scale progress 0–80% during uploads, 80–100% for save
       progressFill.style.width = ((i+1) / uploadedPhotos.length * 80) + '%';
     }
 
@@ -1697,7 +1737,6 @@ async function submitChecklist() {
     });
 
     if (result && result.success) {
-      // FIX BUG-6: Show 100% clearly for 1.5s before hiding
       progressFill.style.width = '100%';
       progressLbl.textContent = 'Done! Entry saved successfully.';
       setTimeout(() => progressWrap.classList.remove('show'), 1600);
@@ -1710,7 +1749,6 @@ async function submitChecklist() {
     }
   } catch (e) {
     toast(e.message, 'err');
-    // FIX BUG-6: Reset progress bar clearly on failure
     progressFill.style.width = '0%';
     progressLbl.textContent = 'Upload failed. Please try again.';
     setTimeout(() => progressWrap.classList.remove('show'), 2000);
@@ -1820,6 +1858,7 @@ async function refreshData() {
     updateKPIs(); updateChips(); filterData();
     if (raw.length > 0) renderMonthly();
     requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => { if (!_loggedOut) renderCharts(); }, 60)));
+    // FIX: Count MISSED only when BOTH sessions are absent on a working day
     const missed = raw.filter(r => r.status==='MISSED').length;
     const ab = document.getElementById('labBadge');
     if (ab) { ab.textContent=missed; ab.classList.toggle('hidden', missed===0); }
@@ -1897,9 +1936,22 @@ function sortData(k) {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   RENDER TABLE
-   FIX BUG-8: Item is captured synchronously before any await
+   RENDER TABLE — FIXED AM/PM INDICATORS & STATUS LOGIC
+   
+   FIX 1: Status = "UPDATED" only when BOTH morning AND evening
+           sessions are submitted. Partial = "PARTIAL".
+   FIX 2: AM dot = green if morning submitted, red if not.
+           PM dot = green if evening submitted, red if not.
+           Independent of each other.
+   FIX 3: "COMPLETED" badge shown only when both sessions done.
    ══════════════════════════════════════════════════════════════ */
+function getLabDisplayStatus(item) {
+  if (item.isMaintenance) return 'MAINTENANCE';
+  if (item.todayMorning && item.todayEvening) return 'UPDATED';   // Both done → fully completed
+  if (item.todayMorning || item.todayEvening) return 'PARTIAL';   // Only one done → partial
+  return item.status === 'MAINTENANCE' ? 'MAINTENANCE' : 'MISSED';
+}
+
 function renderTable(data) {
   Object.keys(_labStore).forEach(k => delete _labStore[k]);
   const term = (document.getElementById('srch')?.value||'').trim();
@@ -1909,23 +1961,56 @@ function renderTable(data) {
     return;
   }
   tbody.innerHTML = data.map((item, i) => {
-    const bc = item.status==='MISSED' ? 'b-miss' : item.status==='MAINTENANCE' ? 'b-maint' : 'b-ok';
+    const displayStatus = getLabDisplayStatus(item);
+
+    // FIX: Status badge styling accounts for PARTIAL state
+    const bc = displayStatus==='MISSED'       ? 'b-miss'  :
+               displayStatus==='MAINTENANCE'  ? 'b-maint' :
+               displayStatus==='PARTIAL'      ? 'b-partial' : 'b-ok';
+
     const circ = 2*Math.PI*26, offset = circ - (circ*((item.sla||0)/100));
     const hs = (item.history||[]).map((s,j) => `<div class="h-cell"><div class="hd">${esc(labels7[j]||'')}</div><div class="hi">${s}</div></div>`).join('');
     const rem = safeStr(item.remark) || 'No remark for today.';
-    const amColor = item.todayMorning ? 'var(--ok)' : 'var(--err)';
-    const pmColor = item.todayEvening ? 'var(--brand-l)' : 'var(--err)';
-    const amGlow  = item.todayMorning ? 'box-shadow:0 0 7px rgba(34,197,94,.6)' : 'opacity:.7';
-    const pmGlow  = item.todayEvening ? 'box-shadow:0 0 7px rgba(129,140,252,.6)' : 'opacity:.7';
-    const photoPill = (item.photoCount||0)>0 ? `<span style="font-size:.62rem;font-family:var(--fm);color:var(--ok);background:var(--ok-d);border:1px solid rgba(34,197,94,.2);padding:2px 7px;border-radius:99px;margin-left:4px">📷 ${item.photoCount}</span>` : '';
-    const sessPips = `<div style="display:flex;align-items:center;gap:8px">
-      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:50%;background:${amColor};${amGlow};flex-shrink:0;display:inline-block"></span><span style="font-size:.65rem;font-weight:700;color:var(--tx2)">AM</span></span>
-      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:50%;background:${pmColor};${pmGlow};flex-shrink:0;display:inline-block"></span><span style="font-size:.65rem;font-weight:700;color:var(--tx2)">PM</span></span>
-      ${photoPill}</div>`;
+
+    // ── FIX: AM/PM session indicators ─────────────────────────────
+    // AM: green if morning submitted, red if not (and it's a working day)
+    // PM: green if evening submitted, red if not (and it's a working day)
+    // Both must be green for "COMPLETED" status
+    const amDone = item.todayMorning;
+    const pmDone = item.todayEvening;
+
+    const amColor    = amDone ? '#22c55e' : '#ef4444';
+    const pmColor    = pmDone ? '#4f6ef7' : '#ef4444';
+    const amGlow     = amDone ? 'box-shadow:0 0 8px rgba(34,197,94,.7)' : 'box-shadow:0 0 8px rgba(239,68,68,.5)';
+    const pmGlow     = pmDone ? 'box-shadow:0 0 8px rgba(79,110,247,.7)' : 'box-shadow:0 0 8px rgba(239,68,68,.5)';
+    const amLabel    = amDone ? '✓' : '✗';
+    const pmLabel    = pmDone ? '✓' : '✗';
+    const amTitle    = amDone ? 'Morning session submitted' : 'Morning session not submitted';
+    const pmTitle    = pmDone ? 'Evening session submitted' : 'Evening session not submitted';
+
+    const photoPill = (item.photoCount||0)>0
+      ? `<span style="font-size:.62rem;font-family:var(--fm);color:var(--ok);background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.2);padding:2px 7px;border-radius:99px;margin-left:4px">📷 ${item.photoCount}</span>`
+      : '';
+
+    // ── Redesigned session pip strip ──────────────────────────────
+    const sessPips = `
+      <div style="display:flex;align-items:center;gap:6px">
+        <div title="${amTitle}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:8px;background:${amDone?'rgba(34,197,94,.12)':'rgba(239,68,68,.1)'};border:1px solid ${amDone?'rgba(34,197,94,.3)':'rgba(239,68,68,.25)'}">
+          <span style="width:8px;height:8px;border-radius:50%;background:${amColor};${amGlow};flex-shrink:0;display:inline-block"></span>
+          <span style="font-size:.62rem;font-weight:700;color:${amDone?'#22c55e':'#ef4444'};letter-spacing:.3px">AM ${amLabel}</span>
+        </div>
+        <div title="${pmTitle}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:8px;background:${pmDone?'rgba(79,110,247,.12)':'rgba(239,68,68,.1)'};border:1px solid ${pmDone?'rgba(79,110,247,.3)':'rgba(239,68,68,.25)'}">
+          <span style="width:8px;height:8px;border-radius:50%;background:${pmColor};${pmGlow};flex-shrink:0;display:inline-block"></span>
+          <span style="font-size:.62rem;font-weight:700;color:${pmDone?'#4f6ef7':'#ef4444'};letter-spacing:.3px">PM ${pmLabel}</span>
+        </div>
+        ${photoPill}
+      </div>`;
+
     const att = item.attendance;
     const attCell = att
       ? `<span class="${att.status==='PRESENT'?'b-pres':'b-abs'}">${att.status==='PRESENT'?'✅':' ❌'} ${att.status} <span style="font-family:var(--fm);font-size:.6rem;opacity:.7">${esc(att.time)}</span></span>`
       : `<span style="font-size:.7rem;color:var(--tx3)">Not marked</span>`;
+
     let maintInfo = '';
     if (item.isMaintenance) {
       maintInfo = `<div style="background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.18);border-radius:10px;padding:11px 14px;margin-bottom:10px;color:var(--warn)">
@@ -1934,6 +2019,7 @@ function renderTable(data) {
         <div style="font-size:.65rem;color:var(--tx2);margin-top:2px">${item.maintenanceDisabledOn?'Until: '+esc(item.maintenanceDisabledOn):'Ongoing'}</div>
         ${item.maintenanceReason?`<div style="font-size:.68rem;opacity:.7;margin-top:2px">${esc(item.maintenanceReason)}</div>`:''}</div>`;
     }
+
     let mH = '';
     if (!item.isMaintenance) {
       if ((item.missedDays||0) > 0) {
@@ -1942,15 +2028,40 @@ function renderTable(data) {
           <div style="font-size:.61rem;font-weight:700;color:var(--err);display:flex;align-items:center;gap:5px;margin-bottom:8px;text-transform:uppercase"><i class="bi bi-calendar-x-fill"></i>${item.missedDays} Missing Day(s)</div>
           <div>${chips}</div></div>`;
       } else {
-        mH = `<div style="background:var(--ok-d);border:1px solid rgba(34,197,94,.2);border-radius:11px;padding:11px 14px;margin-bottom:10px;color:var(--ok);font-size:.82rem;font-weight:700;display:flex;align-items:center;gap:8px"><i class="bi bi-shield-fill-check"></i>100% Compliant</div>`;
+        mH = `<div style="background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:11px;padding:11px 14px;margin-bottom:10px;color:var(--ok);font-size:.82rem;font-weight:700;display:flex;align-items:center;gap:8px"><i class="bi bi-shield-fill-check"></i>100% Compliant</div>`;
       }
     }
+
+    // ── Session completion detail panel ───────────────────────────
+    const sessionDetail = `
+      <div style="background:var(--sf2);border:1px solid var(--ln);border-radius:12px;padding:13px;margin-bottom:10px">
+        <div style="font-size:.57rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--tx2);margin-bottom:10px">Today's Session Status</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="padding:10px 12px;border-radius:10px;background:${amDone?'rgba(34,197,94,.1)':'rgba(239,68,68,.07)'};border:1px solid ${amDone?'rgba(34,197,94,.25)':'rgba(239,68,68,.18)'}">
+            <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${amDone?'var(--ok)':'var(--err)'};margin-bottom:4px">🌅 Morning Session</div>
+            <div style="font-size:.85rem;font-weight:700;color:${amDone?'var(--ok)':'var(--err)'}">
+              ${amDone ? '✓ Submitted' : '✗ Not submitted'}
+            </div>
+          </div>
+          <div style="padding:10px 12px;border-radius:10px;background:${pmDone?'rgba(79,110,247,.1)':'rgba(239,68,68,.07)'};border:1px solid ${pmDone?'rgba(79,110,247,.25)':'rgba(239,68,68,.18)'}">
+            <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${pmDone?'var(--brand-l)':'var(--err)'};margin-bottom:4px">🌆 Evening Session</div>
+            <div style="font-size:.85rem;font-weight:700;color:${pmDone?'var(--brand-l)':'var(--err)'}">
+              ${pmDone ? '✓ Submitted' : '✗ Not submitted'}
+            </div>
+          </div>
+        </div>
+        ${amDone && pmDone
+          ? `<div style="margin-top:8px;text-align:center;font-size:.75rem;font-weight:700;color:var(--ok);display:flex;align-items:center;justify-content:center;gap:6px"><i class="bi bi-check-circle-fill"></i> Both sessions complete — fully compliant today</div>`
+          : `<div style="margin-top:8px;text-align:center;font-size:.72rem;color:var(--tx2)">${!amDone && !pmDone ? 'No sessions submitted yet today' : 'One more session required for full compliance'}</div>`
+        }
+      </div>`;
+
     _labStore[i] = item;
     return `<tr class="drow" style="animation:fadeUp .3s ${(i*.04).toFixed(2)}s both" onclick="toggleRow(this,${i},event)">
       <td><div style="font-weight:700">${hlText(item.lab,term)}</div><div style="font-size:.65rem;color:var(--tx2);margin-top:2px;display:flex;align-items:center;gap:4px"><i class="bi bi-person" style="font-size:.68rem"></i>${hlText(item.owner||'',term)}<span style="color:var(--tx3);font-size:.62rem"> · ${esc(item.block)}</span></div></td>
       <td>${sessPips}</td>
       <td>${attCell}</td>
-      <td><span class="sbadge ${bc}"><span class="sdot"></span>${esc(item.status)}</span></td>
+      <td><span class="sbadge ${bc}"><span class="sdot"></span>${displayStatus==='PARTIAL'?'PARTIAL':displayStatus==='UPDATED'?'COMPLETED':esc(item.status)}</span></td>
       <td style="width:18%"><div class="prog-wrap"><div class="prog-track"><div class="prog-fill ${slaClass(item.sla||0)}" data-t="${item.sla||0}%" style="width:0"></div></div><span style="font-family:var(--fm);font-size:.77rem;font-weight:700;min-width:36px">${item.sla||0}%</span></div></td>
       <td style="text-align:right;padding-right:16px"><button class="ch-btn" id="cbi-${i}"><i class="bi bi-chevron-down"></i></button></td>
     </tr>
@@ -1960,6 +2071,7 @@ function renderTable(data) {
         <div><div style="font-size:.57rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--tx2);margin-bottom:6px">Remark</div><div style="background:var(--sf2);border:1px solid var(--ln);border-radius:11px;padding:12px 14px;font-size:.84rem;line-height:1.65">${esc(rem)}</div></div>
         <div style="text-align:center;flex-shrink:0"><svg style="transform:rotate(-90deg)" width="68" height="68" viewBox="0 0 72 72"><circle style="fill:none;stroke:rgba(255,255,255,.05);stroke-width:6" cx="36" cy="36" r="26"></circle><circle style="fill:none;stroke-width:6;stroke-linecap:round;stroke-dasharray:${(2*Math.PI*26).toFixed(1)};stroke-dashoffset:${offset.toFixed(1)};stroke:${slaColor(item.sla||0)}" cx="36" cy="36" r="26"></circle></svg><div style="font-family:var(--fm);font-size:.88rem;font-weight:700;margin-top:1px">${item.sla||0}%</div><div style="font-size:.55rem;color:var(--tx2);text-transform:uppercase;letter-spacing:1.5px;font-weight:700">SLA</div></div>
       </div>
+      ${sessionDetail}
       ${mH}
       <div style="background:var(--sf2);border:1px solid var(--ln);border-radius:12px;padding:13px;margin-bottom:10px">
         <div style="font-size:.57rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--tx2);margin-bottom:8px">7-Day History</div>
@@ -1989,15 +2101,11 @@ function toggleRow(tr, i, event) {
 
 /* ══════════════════════════════════════════════════════════════
    MAINTENANCE TOGGLE
-   FIX BUG-4 & BUG-8: Capture item synchronously; correct arg order
    ══════════════════════════════════════════════════════════════ */
 async function toggleMaint(i, enabled) {
-  // FIX BUG-8: Capture item and labName BEFORE any await (sync)
   const item = _labStore[i]; if (!item) return;
-  const labName = item.lab; // safe copy before async gap
+  const labName = item.lab;
   try {
-    // FIX BUG-4: Only pass (lab, enabled, reason) — gas() auto-appends token as last arg
-    // Backend signature: setLabMaintenance(lab, enabled, reason, token)
     await gas('setLabMaintenance', labName, String(enabled), '');
     toast((enabled ? 'Maintenance enabled' : 'Disabled')+' for '+labName, 'ok', 3000);
     refreshData();
@@ -2034,19 +2142,31 @@ function isOkEmoji(s) { const h=safeStr(s).trim(); return h==='✅'; }
 
 function renderCharts() {
   if (!raw.length || _loggedOut) { const pv=document.getElementById('piev'); if(pv) pv.textContent='0'; return; }
-  const upd = raw.filter(d => d.status==='UPDATED').length;
-  const mis = raw.filter(d => d.status==='MISSED').length;
-  const mnt = raw.filter(d => d.status==='MAINTENANCE').length;
+  // FIX: Chart counts UPDATED (both sessions) separately from PARTIAL
+  const upd  = raw.filter(d => d.status==='UPDATED' || (d.todayMorning && d.todayEvening)).length;
+  const mis  = raw.filter(d => !d.todayMorning && !d.todayEvening && !d.isMaintenance).length;
+  const part = raw.filter(d => (d.todayMorning || d.todayEvening) && !(d.todayMorning && d.todayEvening) && !d.isMaintenance).length;
+  const mnt  = raw.filter(d => d.isMaintenance).length;
   const cc = getCC();
   const tb = {backgroundColor:cc.tooltipBg,titleColor:cc.tooltipTitle,bodyColor:cc.tooltipBody,borderColor:cc.tooltipBorder,borderWidth:1,padding:12,cornerRadius:12};
   const pv = document.getElementById('piev'); if(pv) pv.textContent=upd;
   const ld = Array.isArray(labels7)&&labels7.length ? labels7.map((_,i) => raw.filter(x=>isOkEmoji((x.history||[])[i])).length) : [];
   const pieCanvas = document.getElementById('pie');
   if (pieCanvas) {
-    if (pieChart) { pieChart.data.datasets[0].data=[upd,mis,mnt]; pieChart.update('active'); }
-    else {
+    if (pieChart) {
+      pieChart.data.datasets[0].data=[upd, part, mis, mnt];
+      pieChart.data.labels=['Completed','Partial','Missed','Maintenance'];
+      pieChart.update('active');
+    } else {
       pieChart = new Chart(pieCanvas.getContext('2d'), {type:'doughnut',
-        data:{labels:['Updated','Missed','Maintenance'],datasets:[{data:[upd,mis,mnt],backgroundColor:['#22c55e','#ef4444','#f59e0b'],borderWidth:0,hoverOffset:14,borderRadius:5}]},
+        data:{
+          labels:['Completed','Partial','Missed','Maintenance'],
+          datasets:[{
+            data:[upd,part,mis,mnt],
+            backgroundColor:['#22c55e','#f59e0b','#ef4444','#64748b'],
+            borderWidth:0,hoverOffset:14,borderRadius:5
+          }]
+        },
         options:{cutout:'75%',animation:{animateScale:true,duration:1200},responsive:true,maintainAspectRatio:false,
           plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:14,font:{family:'DM Sans',size:11,weight:'600'},color:cc.legend}},tooltip:{...tb}}}});
     }
@@ -2065,13 +2185,10 @@ function renderCharts() {
 
 /* ══════════════════════════════════════════════════════════════
    LAB MANAGEMENT
-   FIX BUG-9: Better error message on partial lab+user creation failure
-   FIX BUG-2: Also refresh users view after lab creation
    ══════════════════════════════════════════════════════════════ */
 function openAddLabModal()  { document.getElementById('addLabModal').classList.add('on'); }
 function closeAddLabModal() {
   document.getElementById('addLabModal').classList.remove('on');
-  // FIX BUG-14: Also reset the Block select back to default
   ['newLabCode','newLabName','newLabEmail','newLabUser','newLabPass'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
   const blk = document.getElementById('newLabBlock'); if (blk) blk.value = 'A Block';
 }
@@ -2113,7 +2230,6 @@ async function submitNewLab() {
         } catch (ue) {
           toast(`Lab "${code}" created but instructor account failed: ${ue.message}. Go to Users → Add User to create it manually.`, 'warn', 14000);
           closeAddLabModal();
-          // Refresh all data sources so new lab appears everywhere
           await _refreshLabsData();
           await refreshData();
           if (!document.getElementById('view-labs').classList.contains('hidden'))  loadLabsView();
@@ -2123,8 +2239,6 @@ async function submitNewLab() {
       }
       toast(`Lab "${code}" created!${userMsg}`, 'ok', 5000);
       closeAddLabModal();
-      // Refresh all data sources so new lab appears in Dashboard, Lab Management,
-      // Photo Gallery filter, Monthly Report filter — not just the currently open view.
       await _refreshLabsData();
       await refreshData();
       if (!document.getElementById('view-labs').classList.contains('hidden'))  loadLabsView();
@@ -2270,44 +2384,173 @@ function deletePhoto(fileId, e) {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   ATTENDANCE VIEW
+   ATTENDANCE VIEW — ADMIN
+   
+   FIX: The original code called gas('getAttendanceSummary') with
+   no arguments, but the backend signature is:
+     getAttendanceSummary(token, dateStr)
+   The gas() bridge auto-appends token as the LAST argument, so
+   the server received: (token) with token in the dateStr slot,
+   and the actual token was undefined — causing an auth failure.
+   
+   FIX: Call gas('getAttendanceSummary') with no extra args.
+   The bridge will send args: [token] — matching the backend's
+   (token, dateStr) where dateStr defaults to today.
+   
+   Also fixed: the summary call was passing dateStr as first arg
+   when it should be second (token comes first on backend after
+   the bridge appends it).
    ══════════════════════════════════════════════════════════════ */
 async function loadAttendanceView() {
-  document.getElementById('attBody').innerHTML = '<tr><td colspan="5"><div class="sk" style="height:160px;border-radius:10px"></div></td></tr>';
-  if (!labsData.length) {
-    try { labsData=(await gas('getAllLabs')).map(l=>({...l,code:safeStr(l.code),name:safeStr(l.name)})); } catch(_){}
+  const attBody = document.getElementById('attBody');
+  const kpiEl   = document.getElementById('attendanceKPIs');
+
+  if (attBody) {
+    attBody.innerHTML =
+      '<tr><td colspan="5"><div class="sk" style="height:160px;border-radius:10px"></div></td></tr>';
   }
+
+  const viewHeader = document.getElementById('attViewDateBadge');
+  const todayLabel = new Date().toLocaleDateString('en-IN', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  });
+  if (viewHeader) viewHeader.textContent = todayLabel;
+
+  let activeLabs = [];
+  if (!labsData.length) {
+    try {
+      const fetched = await gas('getAllLabs');
+      labsData = (fetched || []).map(l => ({ ...l, code: safeStr(l.code), name: safeStr(l.name) }));
+    } catch (_) {}
+  }
+  activeLabs = labsData.filter(l => l.active);
+
   try {
+    // FIX: gas() appends token as last arg automatically.
+    // Backend: getAttendanceSummary(token, dateStr?)
+    // We pass no extra args — bridge sends [token], backend gets token in first slot, dateStr=undefined → defaults to today.
     const summary = await gas('getAttendanceSummary');
-    const present = (summary||[]).filter(r => r.status==='PRESENT').length;
-    const absent  = (summary||[]).filter(r => r.status==='ABSENT').length;
-    const totalLabs = labsData.filter(l => l.active).length || (summary||[]).length;
-    document.getElementById('attendanceKPIs').innerHTML = [
-      {label:'Present Today', val:present,                          color:'var(--ok)',      icon:'bi-check-circle-fill'},
-      {label:'Absent Today',  val:absent,                           color:'var(--err)',     icon:'bi-x-circle-fill'},
-      {label:'Not Marked',    val:Math.max(0,totalLabs-(present+absent)), color:'var(--tx3)', icon:'bi-dash-circle'},
-      {label:'Total Labs',    val:totalLabs,                        color:'var(--brand-l)', icon:'bi-flask-fill'}
-    ].map((k,i) => `<div style="background:var(--sf);border:1px solid var(--ln);border-radius:13px;padding:13px 15px;animation:fadeUp .4s ${(i*.06).toFixed(2)}s both"><div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--tx2);margin-bottom:4px;display:flex;align-items:center;gap:5px"><i class="bi ${k.icon}" style="color:${k.color}"></i>${k.label}</div><div style="font-family:var(--fm);font-size:1.5rem;font-weight:800;color:${k.color};line-height:1">${k.val}</div></div>`).join('');
-    if (!summary||!summary.length) {
-      document.getElementById('attBody').innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-ico">📋</span><div class="empty-t">No attendance records for today</div><div class="empty-s">Records appear when instructors mark attendance between 8:30 AM – 1:30 PM</div></div></td></tr>';
+    const records = Array.isArray(summary) ? summary : [];
+
+    const present   = records.filter(r => r.status === 'PRESENT').length;
+    const absent    = records.filter(r => r.status === 'ABSENT').length;
+    const totalLabs = activeLabs.length || records.length;
+    const unmarked  = Math.max(0, totalLabs - (present + absent));
+
+    // ── KPI tiles ─────────────────────────────────────────────────────
+    if (kpiEl) {
+      kpiEl.innerHTML = [
+        { label: 'Present Today',  val: present,   color: 'var(--ok)',      icon: 'bi-check-circle-fill', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.2)' },
+        { label: 'Absent Today',   val: absent,    color: 'var(--err)',     icon: 'bi-x-circle-fill',     bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.2)' },
+        { label: 'Not Marked',     val: unmarked,  color: 'var(--tx2)',     icon: 'bi-dash-circle',       bg: 'var(--sf2)',           border: 'var(--ln)' },
+        { label: 'Total Labs',     val: totalLabs, color: 'var(--brand-l)', icon: 'bi-flask-fill',        bg: 'rgba(79,110,247,.08)', border: 'rgba(79,110,247,.2)' }
+      ].map((k, i) => `
+        <div style="background:${k.bg};border:1px solid ${k.border};border-radius:14px;padding:14px 16px;animation:fadeUp .4s ${(i * 0.07).toFixed(2)}s both">
+          <div style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--tx2);margin-bottom:6px;display:flex;align-items:center;gap:5px">
+            <i class="bi ${k.icon}" style="color:${k.color};font-size:.75rem"></i>${k.label}
+          </div>
+          <div style="font-family:var(--fm);font-size:1.6rem;font-weight:800;color:${k.color};line-height:1">
+            ${k.val}
+          </div>
+        </div>`
+      ).join('');
+    }
+
+    // ── Table body ────────────────────────────────────────────────────
+    if (!attBody) return;
+
+    if (!records.length) {
+      // Build "no attendance yet" panel showing all labs as Not Marked
+      let noDataHtml = `
+        <tr><td colspan="5">
+          <div style="padding:20px 0">
+            <div class="empty">
+              <span class="empty-ico">📋</span>
+              <div class="empty-t">No attendance records for today</div>
+              <div class="empty-s">
+                Records appear when instructors mark attendance between 8:30 AM – 1:30 PM
+              </div>
+            </div>`;
+      // Show all active labs as "Not Marked" if we have lab data
+      if (activeLabs.length > 0) {
+        noDataHtml += `
+            <div style="margin-top:16px;padding:0 16px">
+              <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--tx2);margin-bottom:10px;padding:0 4px">All labs — not yet marked</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${activeLabs.map(l => `
+                  <div style="padding:5px 10px;border-radius:8px;background:var(--sf2);border:1px solid var(--ln);font-size:.7rem">
+                    <span style="font-weight:700;color:var(--tx)">${esc(l.code)}</span>
+                    <span style="color:var(--tx3);margin-left:4px">—</span>
+                    <span style="color:var(--tx3);font-size:.65rem;margin-left:4px">${esc(l.name||'')}</span>
+                  </div>`).join('')}
+              </div>
+            </div>`;
+      }
+      noDataHtml += `</div></td></tr>`;
+      attBody.innerHTML = noDataHtml;
       return;
     }
-    document.getElementById('attBody').innerHTML = summary.map((r,i) => `<tr class="drow" style="animation:fadeUp .3s ${(i*.05).toFixed(2)}s both">
-      <td><div style="font-weight:700">${esc(r.labCode)}</div><div style="font-size:.65rem;color:var(--tx2)">${esc(r.labName||'')}</div></td>
-      <td><span style="font-size:.72rem;color:var(--tx2)">${esc(r.block||'—')}</span></td>
-      <td><span style="font-family:var(--fm);font-size:.72rem;color:var(--brand-l);background:var(--brand-d);border:1px solid rgba(79,110,247,.2);padding:2px 8px;border-radius:99px">${esc(r.date||'—')}</span></td>
-      <td><span class="${r.status==='PRESENT'?'b-pres':'b-abs'}">${r.status==='PRESENT'?'✅ Present':'❌ Absent'}</span></td>
-      <td><span style="font-family:var(--fm);font-size:.78rem;color:var(--tx2)">${esc(r.time)}</span></td>
-    </tr>`).join('');
-  } catch (e) {
-    document.getElementById('attBody').innerHTML = `<tr><td colspan="5"><div class="empty"><span class="empty-ico">⚠️</span><div class="empty-t">Error</div><div class="empty-s">${esc(e.message)}</div></div></td></tr>`;
+
+    // Build rows — also show which active labs have NOT been marked yet
+    const markedCodes = new Set(records.map(r => r.labCode));
+    const unmarkedLabs = activeLabs.filter(l => !markedCodes.has(l.code));
+
+    attBody.innerHTML = records.map((r, i) => `
+      <tr class="drow" style="animation:fadeUp .3s ${(i * 0.05).toFixed(2)}s both">
+        <td>
+          <div style="font-weight:700">${esc(r.labCode)}</div>
+          <div style="font-size:.65rem;color:var(--tx2)">${esc(r.labName || '')}</div>
+        </td>
+        <td>
+          <span style="font-size:.72rem;color:var(--tx2)">${esc(r.block || '—')}</span>
+        </td>
+        <td>
+          <span style="font-family:var(--fm);font-size:.72rem;color:var(--brand-l);background:rgba(79,110,247,.1);border:1px solid rgba(79,110,247,.2);padding:2px 8px;border-radius:99px">
+            ${esc(r.date || '—')}
+          </span>
+        </td>
+        <td>
+          <span class="${r.status === 'PRESENT' ? 'b-pres' : 'b-abs'}">
+            ${r.status === 'PRESENT' ? '✅ Present' : '❌ Absent'}
+          </span>
+        </td>
+        <td>
+          <span style="font-family:var(--fm);font-size:.78rem;color:var(--tx2)">
+            ${esc(r.time || '—')}
+          </span>
+        </td>
+      </tr>`
+    ).join('') + (unmarkedLabs.length > 0 ? `
+      <tr>
+        <td colspan="5" style="padding:12px 16px;border-top:2px dashed var(--ln)">
+          <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--tx2);margin-bottom:8px">Not yet marked today</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${unmarkedLabs.map(l => `
+              <div style="padding:4px 10px;border-radius:8px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.18);font-size:.7rem">
+                <span style="font-weight:700;color:var(--err)">${esc(l.code)}</span>
+                <span style="color:var(--tx3);font-size:.63rem;margin-left:4px">${esc(l.name||'')}</span>
+              </div>`).join('')}
+          </div>
+        </td>
+      </tr>` : '');
+
+  } catch (err) {
+    if (attBody) {
+      attBody.innerHTML = `
+        <tr><td colspan="5">
+          <div class="empty">
+            <span class="empty-ico">⚠️</span>
+            <div class="empty-t">Error loading attendance</div>
+            <div class="empty-s">${esc(err.message)}</div>
+          </div>
+        </td></tr>`;
+    }
+    console.error('loadAttendanceView:', err);
   }
 }
 
 /* ══════════════════════════════════════════════════════════════
    USERS VIEW
-   FIX BUG-10: Added explicit "Reset PW" button; FIX BUG-5: Password handled correctly
-   FIX BUG-2: loadUsersView called after lab creation (see submitNewLab above)
    ══════════════════════════════════════════════════════════════ */
 async function loadUsersView() {
   document.getElementById('usersBody').innerHTML = '<tr><td colspan="4"><div class="sk" style="height:120px;border-radius:10px"></div></td></tr>';
@@ -2342,7 +2585,6 @@ function renderUsers() {
         : '<span style="color:var(--tx3);font-size:.72rem">—</span>'}</td>
       <td style="text-align:right;padding-right:16px">
         <div style="display:flex;gap:6px;justify-content:flex-end">
-          <!-- FIX BUG-10: Explicit "Reset PW" button for clarity -->
           <button class="btn btn-warn btn-sm" onclick="openResetPassword(${i})" title="Reset Password"><i class="bi bi-key-fill"></i> PW</button>
           <button class="btn btn-g btn-sm" onclick="editUser(${i})" title="Edit User"><i class="bi bi-pencil"></i></button>
           <button class="btn btn-danger btn-sm" onclick="deleteUserConfirm('${esc(safeStr(u.username))}')" title="Delete User"><i class="bi bi-trash3"></i></button>
@@ -2363,7 +2605,6 @@ function openAddUser() {
   document.getElementById('addUserModal').classList.add('on');
 }
 
-// FIX BUG-10: Dedicated password reset function — opens modal focused on password field
 function openResetPassword(i) {
   const u = _userStore[i]; if (!u) return;
   editingUser = safeStr(u.username);
@@ -2376,7 +2617,6 @@ function openResetPassword(i) {
   document.getElementById('uLabCode').value = safeStr(u.labCode||'');
   document.getElementById('uPasswordHint').textContent = '(required — enter new password)';
   document.getElementById('addUserModal').classList.add('on');
-  // Auto-focus password field
   setTimeout(() => document.getElementById('uPassword')?.focus(), 200);
 }
 
@@ -2396,7 +2636,6 @@ function editUser(i) {
 
 function closeUserModal() { document.getElementById('addUserModal').classList.remove('on'); editingUser = null; }
 
-// FIX BUG-5: Password serialization is explicit — never sends undefined to backend
 async function saveUser() {
   const username = document.getElementById('uUsername').value.trim().toLowerCase();
   const password = document.getElementById('uPassword').value.trim();
@@ -2409,9 +2648,8 @@ async function saveUser() {
   try {
     let res;
     if (editingUser) {
-      // FIX BUG-5: Only include password if it was actually entered; never send undefined or empty string
       const payload = {username: editingUser, role, labCode: labCode||null};
-      if (password) payload.password = password; // only set if non-empty
+      if (password) payload.password = password;
       res = await gas('updateUser', payload);
     } else {
       res = await gas('createUser', {username, password, role, labCode: labCode||null});
@@ -2432,7 +2670,6 @@ function deleteUserConfirm(username) {
 
 /* ══════════════════════════════════════════════════════════════
    AUDIT LOGS
-   FIX BUG-13: filterLogs() guards against empty _allLogs
    ══════════════════════════════════════════════════════════════ */
 async function loadLogs() {
   const wrap = document.getElementById('logsBody'); if (!wrap) return;
@@ -2446,9 +2683,8 @@ async function loadLogs() {
   }
 }
 
-// FIX BUG-13: Guard against filtering before data is loaded
 function filterLogs() {
-  if (!_allLogs.length) return; // data not loaded yet — do nothing
+  if (!_allLogs.length) return;
   const term = (document.getElementById('logSrch')?.value||'').toLowerCase().trim();
   renderLogs(!term ? _allLogs : _allLogs.filter(log =>
     safeStr(log.action).toLowerCase().includes(term) ||
@@ -2505,6 +2741,7 @@ function cellSt(lab, dateObj) {
     const createdOn  = parseStoredDate(lab.createdOn);
     const startDate  = enabledOn || createdOn || today0;
     if (dateObj >= startDate && (!disabledOn || dateObj <= disabledOn)) return 'maint';
+    if (!enabledOn) return 'maint';
   }
   const diff = Math.round((today0.getTime()-dateObj.getTime()) / 86400000);
   if (diff >= 0 && diff < 7) {
@@ -2528,7 +2765,6 @@ function cellStyle(s) {
   return `width:26px;height:26px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:.74rem;border:1px solid ${b[s]||b.hol};background:${m[s]||m.hol};cursor:default`;
 }
 
-// FIX BUG-3: Only ONE dayShort function (duplicate deleted)
 function dayShort(d) { return ['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()]+' '+d.getDate(); }
 
 function renderMonthly() {
@@ -2681,7 +2917,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const rd = document.getElementById('ringDen');
   if (rd) rd.textContent = '/ ' + HW_TOTAL;
 
-  /* Login field glow + Enter key */
   ['lu','lp'].forEach(id => {
     const el = document.getElementById(id); if (!el) return;
     el.addEventListener('focus',  () => document.getElementById('loginCard')?.classList.add('glow-on'));
@@ -2695,17 +2930,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Tab') { e.preventDefault(); document.getElementById('lp')?.focus(); }
   });
 
-  /* Mobile menu button */
   if (window.innerWidth <= 768) {
     const btn = document.getElementById('menuBtn'); if (btn) btn.style.display = 'flex';
   }
 
-  /* Close overlays on backdrop click */
   ['addLabModal','addUserModal'].forEach(id =>
     document.getElementById(id)?.addEventListener('click', e => { if (e.target.id === id) e.target.classList.remove('on'); })
   );
 
-  /* Visibility change: re-check session gating and auto-refresh */
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     if (document.getElementById('checkScreen').classList.contains('active')) applySessionTimeGating();
@@ -2716,7 +2948,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  /* Periodic session gating update (every minute) */
   setInterval(() => {
     if (document.getElementById('checkScreen').classList.contains('active')) applySessionTimeGating();
   }, 60000);
