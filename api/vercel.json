@@ -1,6 +1,11 @@
 {
-  "rewrites": [
-    { "source": "/api/gas", "destination": "/api/gas" },
-    { "source": "/(.*)",   "destination": "/public/index.html" }
+  "version": 2,
+  "builds": [
+    { "src": "public/index.html", "use": "@vercel/static" },
+    { "src": "api/gas.js",        "use": "@vercel/node"   }
+  ],
+  "routes": [
+    { "src": "/api/gas", "dest": "/api/gas.js"        },
+    { "src": "/(.*)",    "dest": "/public/index.html"  }
   ]
 }
