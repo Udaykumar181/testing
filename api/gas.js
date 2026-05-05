@@ -1,5 +1,5 @@
 const GAS_URL =
-  "https://script.google.com/macros/s/AKfycbyO9RspNQ7h7DJRTGwnStojVAguA2KSqjPMjiKxeH9RludbFcXLl0HSPlLbOkJlMO5Zvg/exec";
+  "https://script.google.com/macros/s/AKfycbwvZo3MVPcG8QsNcEdYHH2TpOawmF9rX35i-FbMnivnh09jJ7Ic2QBB6qyY3lJVeM7z/exec";
  
 module.exports = async function handler(req, res) {
   /* ── CORS headers ── */
